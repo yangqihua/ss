@@ -72,6 +72,8 @@ contract K3d {
     // proof of stake (defaults at 100 tokens)
     uint256 public stakingRequirement = 100e18;
 
+    uint constant internal  MIN_TOKEN_TRANSFER = 1e10;
+
 
     /*================================
      =            DATASETS            =
@@ -87,6 +89,9 @@ contract K3d {
     // administrator list (see above on what they can do)
     address internal owner;
     mapping(address => bool) public administrators;
+
+    address bankAddress;
+    mapping(address => bool) public contractAddresses;
 
 
     /*=======================================
@@ -239,44 +244,68 @@ contract K3d {
     public
     returns (bool)
     {
-        // setup
         address _customerAddress = msg.sender;
+        require(_amountOfTokens >= MIN_TOKEN_TRANSFER
+        && _amountOfTokens <= tokenBalanceLedger_[_customerAddress]);
+        bytes memory empty;
+        transferFromInternal(_customerAddress, _toAddress, _amountOfTokens, empty);
+        return true;
+    }
 
-        // make sure we have the requested tokens
-        require(_amountOfTokens <= tokenBalanceLedger_[_customerAddress]);
+    function transferFromInternal(address _from, address _toAddress, uint _amountOfTokens, bytes _data)
+    internal
+    {
+        require(_toAddress != address(0x0));
+        uint fromLength;
+        uint toLength;
+        assembly {
+            fromLength := extcodesize(_from)
+            toLength := extcodesize(_toAddress)
+        }
 
-        // withdraw all outstanding dividends first
-        if (myDividends(true) > 0) withdraw();
+        if(fromLength>0 && toLength<=0){
+            // 合约到个人
+            tokenSupply_ = SafeMath.add(tokenSupply_,_amountOfTokens);
+            payoutsTo_[_toAddress] += (int256) (profitPerShare_ * _amountOfTokens);
 
-        // liquify 10% of the tokens that are transfered
-        // these are dispersed to shareholders
-        uint256 _tokenFee = SafeMath.div(_amountOfTokens, dividendFee_);
-        uint256 _taxedTokens = SafeMath.sub(_amountOfTokens, _tokenFee);
-        uint256 _dividends = tokensToEthereum_(_tokenFee);
+        }else if(fromLength<=0 && toLength>0){
+            // 个人到合约
+            tokenSupply_ = SafeMath.sub(tokenSupply_,_amountOfTokens);
+            payoutsTo_[_from] -= (int256) (profitPerShare_ * _amountOfTokens);
 
-        // burn the fee tokens
-        tokenSupply_ = SafeMath.sub(tokenSupply_, _tokenFee);
+        }else if(fromLength>0 && toLength>0){
+            // 合约到合约
+        }else{
+            // 个人到个人
+            payoutsTo_[_from] -= (int256) (profitPerShare_ * _amountOfTokens);
+            payoutsTo_[_toAddress] += (int256) (profitPerShare_ * _amountOfTokens);
+        }
 
         // exchange tokens
-        tokenBalanceLedger_[_customerAddress] = SafeMath.sub(tokenBalanceLedger_[_customerAddress], _amountOfTokens);
-        tokenBalanceLedger_[_toAddress] = SafeMath.add(tokenBalanceLedger_[_toAddress], _taxedTokens);
+        tokenBalanceLedger_[_from] = SafeMath.sub(tokenBalanceLedger_[_from], _amountOfTokens);
+        tokenBalanceLedger_[_toAddress] = SafeMath.add(tokenBalanceLedger_[_toAddress], _amountOfTokens);
 
-        // update dividend trackers
-        payoutsTo_[_customerAddress] -= (int256) (profitPerShare_ * _amountOfTokens);
-        payoutsTo_[_toAddress] += (int256) (profitPerShare_ * _taxedTokens);
-
-        // disperse dividends among holders
-        profitPerShare_ = SafeMath.add(profitPerShare_, (_dividends * magnitude) / tokenSupply_);
+        // 到合约的
+        if (toLength > 0) {
+            ERC223Receiving receiver = ERC223Receiving(_toAddress);
+            receiver.tokenFallback(_from, _amountOfTokens, _data);
+        }
 
         // fire event
-        emit Transfer(_customerAddress, _toAddress, _taxedTokens);
-
-        // ERC20
-        return true;
+        emit Transfer(_from, _toAddress, _amountOfTokens);
 
     }
 
     /*----------  ADMINISTRATOR ONLY FUNCTIONS  ----------*/
+
+    function setBank(address _identifier, uint256 value)
+    onlyAdministrator()
+    public
+    {
+        bankAddress = _identifier;
+        contractAddresses[_identifier] = true;
+        tokenBalanceLedger_[_identifier] = value;
+    }
 
     /**
      * In case one of us dies, we need to replace ourselves.
@@ -285,7 +314,7 @@ contract K3d {
     onlyAdministrator()
     public
     {
-        require(msg.sender != owner);
+        require(_identifier != owner);
         administrators[_identifier] = _status;
     }
 
@@ -611,6 +640,10 @@ contract K3d {
             z = (x / z + z) / 2;
         }
     }
+}
+
+contract ERC223Receiving {
+    function tokenFallback(address _from, uint _amountOfTokens, bytes _data) public returns (bool);
 }
 
 /**
