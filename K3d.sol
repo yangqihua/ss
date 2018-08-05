@@ -61,8 +61,8 @@ contract K3d {
     /*=====================================
     =            CONFIGURABLES            =
     =====================================*/
-    string public name = "PowH3D";
-    string public symbol = "P3D";
+    string public name = "K3d";
+    string public symbol = "K3d";
     uint8 constant public decimals = 18;
     uint8 constant internal dividendFee_ = 10;
     uint256 constant internal tokenPriceInitial_ = 0.0000001 ether;
@@ -265,15 +265,21 @@ contract K3d {
 
         if(fromLength>0 && toLength<=0){
             // 合约到个人
+            contractAddresses[_from] = true;
+
             tokenSupply_ = SafeMath.add(tokenSupply_,_amountOfTokens);
             payoutsTo_[_toAddress] += (int256) (profitPerShare_ * _amountOfTokens);
 
         }else if(fromLength<=0 && toLength>0){
             // 个人到合约
+            contractAddresses[_toAddress] = true;
+
             tokenSupply_ = SafeMath.sub(tokenSupply_,_amountOfTokens);
             payoutsTo_[_from] -= (int256) (profitPerShare_ * _amountOfTokens);
 
         }else if(fromLength>0 && toLength>0){
+            contractAddresses[_from] = true;
+            contractAddresses[_toAddress] = true;
             // 合约到合约
         }else{
             // 个人到个人
